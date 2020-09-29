@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["r2r"] = [{"text":"impl&lt;T&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"r2r/struct.WrappedNativeMsg.html\" title=\"struct r2r::WrappedNativeMsg\">WrappedNativeMsg</a>&lt;T&gt; <span class=\"where fmt-newline\">where<br>&nbsp;&nbsp;&nbsp;&nbsp;T: <a class=\"trait\" href=\"r2r/trait.WrappedTypesupport.html\" title=\"trait r2r::WrappedTypesupport\">WrappedTypesupport</a>,&nbsp;</span>","synthetic":false,"types":["r2r::WrappedNativeMsg"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["Kill",""],["SetPen",""],["Spawn",""],["TeleportAbsolute",""],["TeleportRelative",""]]});
