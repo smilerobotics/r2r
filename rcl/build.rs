@@ -21,6 +21,8 @@ fn main() {
         println!("cargo:rustc-link-search=native={}/lib", ament_prefix_path);
     }
 
+    builder = builder.clang_arg("-I/usr/arm-linux-gnueabihf/include/");
+
     println!("cargo:rustc-link-lib=dylib=rcl");
     // println!("cargo:rustc-link-lib=dylib=rcl_logging_noop");
     // default logging seem to be changed to spdlog
