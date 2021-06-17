@@ -50,10 +50,9 @@ fn field_type(t: u8) -> String {
     } else if t == (rosidl_typesupport_introspection_c__ROS_TYPE_DOUBLE as u8) {
         "f64".to_owned()
     } else if t == (rosidl_typesupport_introspection_c__ROS_TYPE_LONG_DOUBLE as u8) {
+        // f128 does not exist in rust
         "u128".to_owned()
-    }
-    // f128 does not exist in rust
-    else if t == (rosidl_typesupport_introspection_c__ROS_TYPE_MESSAGE as u8) {
+    } else if t == (rosidl_typesupport_introspection_c__ROS_TYPE_MESSAGE as u8) {
         "message".to_owned()
     } else {
         panic!("ros native type not implemented: {}", t);
@@ -121,12 +120,59 @@ pub fn generate_rust_service(module_: &str, prefix_: &str, name_: &str) -> Strin
     )
 }
 
+pub fn generate_rust_action(module_: &str, prefix_: &str, name_: &str) -> String {
+    format!(
+        "
+        pub struct Action();
+        impl WrappedActionTypeSupport for Action {{
+            type Goal = Goal;
+            type Result = Result;
+            type Feedback = Feedback;
+
+            // internal structs
+            type FeedbackMessage = FeedbackMessage;
+            type SendGoal = SendGoal::Service;
+            type GetResult = GetResult::Service;
+
+            fn get_ts() -> &'static rosidl_action_type_support_t {{
+                unsafe {{
+                    &*rosidl_typesupport_c__get_action_type_support_handle__{module}__{prefix}__{name}()
+                }}
+            }}
+
+            fn make_goal_request_msg(goal_id: unique_identifier_msgs::msg::UUID, goal: Goal) -> SendGoal::Request {{
+                SendGoal::Request {{
+                     goal_id,
+                     goal
+                }}
+            }}
+
+            fn make_result_request_msg(goal_id: unique_identifier_msgs::msg::UUID) -> GetResult::Request {{
+                GetResult::Request {{
+                     goal_id,
+                }}
+            }}
+
+            fn destructure_feedback_msg(msg: FeedbackMessage) -> (unique_identifier_msgs::msg::UUID, Feedback) {{
+                (msg.goal_id, msg.feedback)
+            }}
+
+            fn destructure_result_response_msg(msg: GetResult::Response) -> (i8, Result) {{
+                (msg.status, msg.result)
+            }}
+        }}
+
+            ",
+        module = module_, prefix = prefix_, name = name_
+    )
+}
+
 // TODO: this is a terrible hack :)
 pub fn generate_rust_msg(module_: &str, prefix_: &str, name_: &str) -> String {
     let key = format!("{}__{}__{}", module_, prefix_, name_);
     let ptr = INTROSPECTION_FNS
         .get(key.as_str())
-        .expect(&format!("code generation error: {}", name_));
+        .expect(&format!("code generation error: {}", key));
     let ptr = *ptr as *const i32 as *const rosidl_message_type_support_t;
     unsafe {
         let (module, prefix, mut name, c_struct, members) = introspection(ptr);
@@ -134,17 +180,20 @@ pub fn generate_rust_msg(module_: &str, prefix_: &str, name_: &str) -> String {
         assert_eq!(prefix, prefix_);
         assert_eq!(name, name_);
 
-        if prefix == "srv" {
+        if prefix == "srv" || prefix == "action" {
             // for srv, the message name is both the service name and _Request or _Respone
             // we only want to keep the last part.
-            let mut nn = name.splitn(2, "_");
-            let _mod_name = nn
-                .next()
-                .expect(&format!("malformed service name {}", name));
-            let msg_name = nn
-                .next()
-                .expect(&format!("malformed service name {}", name));
-            name = msg_name.to_owned();
+            // same for actions with _Goal, _Result, _Feedback
+            // TODO: refactor...
+            // handle special case of ActionName_ServiceName_Response
+            let nn = name.splitn(3, "_").collect::<Vec<&str>>();
+            if let [_mod_name, _srv_name, msg_name] = &nn[..] {
+                name = msg_name.to_string();
+            } else if let [_mod_name, msg_name] = &nn[..] {
+                name = msg_name.to_string();
+            } else {
+                panic!("malformed service name {}", name);
+            }
         }
 
         let mut fields = String::new();
@@ -154,12 +203,32 @@ pub fn generate_rust_msg(module_: &str, prefix_: &str, name_: &str) -> String {
             let rust_field_type = field_type(member.type_id_);
             let rust_field_type = if rust_field_type == "message" {
                 let (module, prefix, name, _, _) = introspection(member.members_);
-                format!(
-                    "{module}::{prefix}::{msgname}",
-                    module = module,
-                    prefix = prefix,
-                    msgname = name
-                )
+                // hack here to rustify nested action type names
+                if prefix == "action" {
+                    if let Some((n1, n2)) = name.rsplit_once("_") {
+                        format!(
+                            "{module}::{prefix}::{srvname}::{msgname}",
+                            module = module,
+                            prefix = prefix,
+                            srvname = n1,
+                            msgname = n2
+                        )
+                    } else {
+                        format!(
+                            "{module}::{prefix}::{msgname}",
+                            module = module,
+                            prefix = prefix,
+                            msgname = name
+                        )
+                    }
+                } else {
+                    format!(
+                        "{module}::{prefix}::{msgname}",
+                        module = module,
+                        prefix = prefix,
+                        msgname = name
+                    )
+                }
             } else {
                 rust_field_type
             };
@@ -244,7 +313,16 @@ pub fn generate_rust_msg(module_: &str, prefix_: &str, name_: &str) -> String {
                 ));
             } else if rust_field_type == "message" {
                 let (module, prefix, name, _, _) = introspection(member.members_);
-                from_native.push_str(&format!("{field_name}: {module}::{prefix}::{msgname}::from_native(&msg.{field_name}),\n", field_name = field_name, module = module, prefix=prefix, msgname = name));
+                // same hack as above to rustify message type names
+                if prefix == "action" {
+                    if let Some((n1, n2)) = name.rsplit_once("_") {
+                        from_native.push_str(&format!("{field_name}: {module}::{prefix}::{srvname}::{msgname}::from_native(&msg.{field_name}),\n", field_name = field_name, module = module, prefix=prefix, srvname = n1, msgname = n2));
+                    } else {
+                        panic!("ooops at from_native");
+                    }
+                } else {
+                    from_native.push_str(&format!("{field_name}: {module}::{prefix}::{msgname}::from_native(&msg.{field_name}),\n", field_name = field_name, module = module, prefix=prefix, msgname = name));
+                }
             } else {
                 from_native.push_str(&format!(
                     "{field_name}: msg.{field_name},\n",
@@ -389,8 +467,8 @@ impl WrappedNativeMsgUntyped {
 
     let mut lines = String::new();
     for msg in msgs {
-        // for now don't generate untyped services
-        if msg.prefix == "srv" {
+        // for now don't generate untyped services or actions
+        if msg.prefix == "srv" || msg.prefix == "action" {
             continue;
         }
 
